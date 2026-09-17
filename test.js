@@ -1,14 +1,12 @@
 import mineflayer from "mineflayer";
 import chalk from "chalk";
 import { createServer } from "node:http";
-import { SocksClient } from "socks"; // TAMBAHAN: Import library socks
 
 const webPort = Number(process.env.PORT ?? 3001);
 
 // Setup global bot arguments
 let botArgs = {
   host: "alwination.id",
-  port: 25565, // Penting untuk destinasi proxy
   version: "1.21.4",
 };
 
@@ -61,8 +59,7 @@ createServer((request, response) => {
 
 // Bot class
 class MCBot {
-  // Tambahan argumen proxyConfig
-  constructor(username, isPrimary = false, password = "kambinghitam", proxyConfig = null) {
+  constructor(username, isPrimary = false, password = "kambinghitam") {
     this.username = username;
     this.host = botArgs["host"];
     this.version = botArgs["version"];
@@ -70,7 +67,6 @@ class MCBot {
     this.authenticated = false;
     this.registerSent = false;
     this.isPrimary = isPrimary; 
-    this.proxyConfig = proxyConfig; // Simpan konfigurasi proxy
     this.reconnectTimer = null;
 
     // Initialize the bot
@@ -82,49 +78,11 @@ class MCBot {
     this.authenticated = false;
     this.registerSent = false;
     this.spawnHandled = false;
-
-    let botOptions = {
+    this.bot = mineflayer.createBot({
       username: this.username,
       host: this.host,
       version: this.version,
-    };
-
-    // JIKA PROXY DIAKTIFKAN UNTUK BOT INI
-    if (this.proxyConfig && this.proxyConfig.enabled) {
-      this.log(chalk.yellow(`Menghubungkan menggunakan Proxy SOCKS5 (${this.proxyConfig.host}:${this.proxyConfig.port})...`));
-      
-      botOptions.connect = (client) => {
-        SocksClient.createConnection({
-          proxy: {
-            host: this.proxyConfig.host,
-            port: this.proxyConfig.port,
-            type: 5 // Tipe SOCKS5
-          },
-          command: 'connect',
-          destination: {
-            host: this.host,
-            port: botArgs.port // Port server minecraft default 25565
-          }
-        }, (err, info) => {
-          if (err) {
-            this.log(chalk.red(`Gagal terhubung ke Proxy: ${err.message}`));
-            return client.emit('error', err);
-          }
-          client.setSocket(info.socket);
-          client.emit('connect');
-        });
-      };
-    }
-    
-    // =========================================================
-    // CATATAN ALTERNATIF (Bukan Proxy):
-    // Jika Anda menggunakan VPS yang memiliki BANYAK IP Bawaan, 
-    // Anda tidak butuh Proxy. Cukup hapus komentar di bawah ini
-    // dan masukkan salah satu IP VPS Anda:
-    // botOptions.localAddress = "IP_VPS_KEDUA_ANDA";
-    // =========================================================
-
-    this.bot = mineflayer.createBot(botOptions);
+    });
     
     if (this.isPrimary) {
       globalThis.activeBot = this.bot;
@@ -171,6 +129,7 @@ class MCBot {
       }
 
       // Trigger Sukses Register / Login
+      // Ditambahkan deteksi pesan peringatan login dari server (premium, email, second factor)
       if (!this.authenticated && /logged in|already logged|login berhasil|berhasil login|successful login|login successful|hi on minecraft server network|useful commands|if you do not want to login next time|you still do not have an email address|you still do not have second factor enabled/.test(text)) {
         this.authenticated = true;
         this.log("Autentikasi berhasil! Join survival dalam 1 detik...");
@@ -230,27 +189,19 @@ class MCBot {
 // PENGATURAN MULTIPLE BOTS
 // ==========================================
 
+// Fungsi untuk membuat nama normal acak + angka agar unik
 function getRandomName() {
   const names = ["Andi", "Dimas", "Budi", "Reza", "Bayu", "Joko", "Putra", "Adit", "Rizky", "Ilham", "Alex", "Kevin", "Rafi", "Fajar", "Dion", "Surya"];
   const randomStr = names[Math.floor(Math.random() * names.length)];
-  const randomNumber = Math.floor(Math.random() * 9999);
-  return `${randomStr}${randomNumber}`;
+  const randomNumber = Math.floor(Math.random() * 9999); // Angka acak 0-9999
+  return `${randomStr}${randomNumber}`; // Contoh output: Dimas8421
 }
 
-// 1. Bot Utama (letkolonel) - Tanpa Proxy (IP Asli)
-const mainBot = new MCBot("letkolonel", true, "kambinghitam", { enabled: false });
+// 1. Bot Utama (letkolonel)
+const mainBot = new MCBot("letkolonel", true, "kambinghitam");
 
 // 2. Bot Siklus (Bot ke-2)
 let cycleBot = null;
-
-// ===============================================
-// KONFIGURASI PROXY UNTUK BOT KE-2
-// ===============================================
-const bot2ProxyConfig = {
-  enabled: false, // UBAH MENJADI TRUE JIKA INGIN MENGGUNAKAN PROXY
-  host: "135.125.232.151", // GANTI DENGAN IP SOCKS5 PROXY ANDA
-  port: 1080 // GANTI DENGAN PORT PROXY ANDA
-};
 
 function cycleAccount() {
   if (cycleBot && cycleBot.bot) {
@@ -266,16 +217,14 @@ function cycleAccount() {
       const randomName = getRandomName();
       const randomPass = Math.random().toString(36).substring(2, 10);
       
-      // Kirim konfigurasi proxy ke Bot ke-2 saat pembuatan
-      cycleBot = new MCBot(randomName, false, randomPass, bot2ProxyConfig);
+      cycleBot = new MCBot(randomName, false, randomPass);
       cycleBot.log(`Membuat akun baru dengan nama normal: ${randomName} (Password: ${randomPass})`);
     }, 1000);
   } else {
     const randomName = getRandomName();
     const randomPass = Math.random().toString(36).substring(2, 10);
     
-    // Kirim konfigurasi proxy ke Bot ke-2 saat pembuatan awal
-    cycleBot = new MCBot(randomName, false, randomPass, bot2ProxyConfig);
+    cycleBot = new MCBot(randomName, false, randomPass);
     cycleBot.log(`Membuat akun baru dengan nama normal: ${randomName} (Password: ${randomPass})`);
   }
 }

@@ -18,21 +18,18 @@ const logLines = [];
 // ===============================================
 // SISTEM ROTASI PROXY SOCKS5 DARI GITHUB
 // ===============================================
-let socks5Proxies = []; // Menyimpan daftar proxy aktif
+let socks5Proxies = []; 
 
-// Fungsi untuk mengambil daftar proxy terbaru dari GitHub
 async function updateProxyList() {
   try {
     console.log(chalk.cyan("[PROXY] Sedang mengambil daftar proxy SOCKS5 dari GitHub..."));
-    // Menggunakan raw github URL untuk mendapatkan isi teksnya langsung
     const response = await fetch("https://raw.githubusercontent.com/hproxy-com/free-proxy-list/main/socks5.txt");
     const data = await response.text();
     
-    // Memisahkan berdasarkan baris baru dan membersihkan spasi
     socks5Proxies = data
       .split('\n')
       .map(line => line.trim())
-      .filter(line => line.includes(':')); // Pastikan formatnya host:port
+      .filter(line => line.includes(':')); 
       
     console.log(chalk.green(`[PROXY] Berhasil mengumpulkan ${socks5Proxies.length} proxy SOCKS5!`));
   } catch (err) {
@@ -40,10 +37,9 @@ async function updateProxyList() {
   }
 }
 
-// Fungsi untuk mengambil satu proxy acak dari daftar
 function getRandomProxyConfig() {
   if (socks5Proxies.length === 0) {
-    return { enabled: false }; // Jika daftar proxy kosong, jangan pakai proxy (fallback)
+    return { enabled: false }; 
   }
   
   const randomProxy = socks5Proxies[Math.floor(Math.random() * socks5Proxies.length)];
@@ -55,7 +51,6 @@ function getRandomProxyConfig() {
     port: parseInt(port, 10)
   };
 }
-
 
 function ansiToHtml(value) {
   const escaped = String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -146,8 +141,7 @@ class MCBot {
           }
         }, (err, info) => {
           if (err) {
-            this.log(chalk.red(`Gagal terhubung ke Proxy: ${err.message}`));
-            return client.emit('error', err); // Lempar error ke bot.on('error')
+            return client.emit('error', err); 
           }
           client.setSocket(info.socket);
           client.emit('connect');
@@ -191,7 +185,6 @@ class MCBot {
       }
       const text = message.toLowerCase();
 
-      // Trigger Register
       if (!this.authenticated && !this.registerSent && /not registered|belum terdaftar|register/.test(text)) {
         this.registerSent = true;
         this.log("Akun belum terdaftar. Register dalam 5 detik...");
@@ -201,7 +194,6 @@ class MCBot {
         }, 5000);
       }
 
-      // Trigger Sukses Register / Login
       if (!this.authenticated && /logged in|already logged|login berhasil|berhasil login|successful login|login successful|hi on minecraft server network|useful commands|if you do not want to login next time|you still do not have an email address|you still do not have second factor enabled/.test(text)) {
         this.authenticated = true;
         this.log("Autentikasi berhasil! Join survival dalam 1 detik...");
@@ -225,25 +217,27 @@ class MCBot {
     this.bot.on("end", async (reason) => {
       this.log(chalk.red(`Disconnected: ${reason}`));
 
-      // Jika sengaja dikeluarkan dari cycleAccount
       if (reason == "disconnect.quitting") {
         return;
       }
 
-      // JIKA INI ADALAH BOT KEDUA (Siklus Proxy)
+      // JIKA BOT SIKLUS (Bot 2) TERPUTUS (Proxy Mati / Timed out / Socket closed)
       if (!this.isPrimary) {
-        this.log(chalk.yellow("Koneksi bermasalah / Proxy Mati. Mengganti SOCKS5 baru..."));
+        this.log(chalk.yellow("Koneksi gagal/terputus. Langsung mencari SOCKS5 baru tanpa jeda..."));
         
-        // Panggil cycleAccount segera dengan jeda 5 detik agar tidak spamming terlalu cepat
-        if (this.reconnectTimer) return;
-        this.reconnectTimer = setTimeout(() => {
+        // Ambil proxy baru
+        this.proxyConfig = getRandomProxyConfig();
+        
+        // Langsung sambungkan ulang TANPA DELAY
+        if (this.reconnectTimer) {
+          clearTimeout(this.reconnectTimer);
           this.reconnectTimer = null;
-          cycleAccount(); // Ini akan otomatis membuat bot dengan PROXY BARU
-        }, 5000);
-        return; // Setop disini untuk bot ke 2
+        }
+        this.initBot(); 
+        return; 
       }
 
-      // JIKA INI BOT PERTAMA (Tanpa Proxy) -> Gunakan sistem reconnect lama
+      // JIKA INI BOT UTAMA (Tanpa Proxy) -> Gunakan delay standar 5 detik
       if (this.reconnectTimer) return;
       this.reconnectTimer = setTimeout(() => {
         this.reconnectTimer = null;
@@ -264,8 +258,6 @@ class MCBot {
 
     this.bot.on("error", async (err) => {
       this.log(chalk.red(`Error: ${err.message}`));
-      // Tidak perlu manual handle reconnect di sini, karena error proxy/socket 
-      // akan otomatis memicu bot.on("end") setelahnya.
     });
   }
 }
@@ -284,7 +276,6 @@ function getRandomName() {
 // 1. Bot Utama (letkolonel) - Tanpa Proxy (IP Asli)
 const mainBot = new MCBot("letkolonel", true, "kambinghitam", { enabled: false });
 
-
 // 2. Bot Siklus (Bot ke-2)
 let cycleBot = null;
 let cycleIntervalId = null;
@@ -292,33 +283,29 @@ let cycleIntervalId = null;
 function cycleAccount() {
   if (cycleBot && cycleBot.bot) {
     try {
-      // Usahakan mengirim chat perpisahan jika belum disconenct error
-      cycleBot.log("Mengirim pesan perpisahan dan siap mengganti akun...");
+      cycleBot.log("Siklus 5 menit tercapai. Bersiap mengganti AKUN BARU...");
     } catch (e) {}
 
-    // Putuskan koneksi akun lama
     try {
       cycleBot.bot.quit();
     } catch (e) {}
   }
   
-  // Beri jeda sebentar sebelum membuat koneksi baru
   setTimeout(() => {
+    // BUAT AKUN BARU
     const randomName = getRandomName();
     const randomPass = Math.random().toString(36).substring(2, 10);
-    
-    // MENDAPATKAN SOCKS5 ACAK DARI DAFTAR GITHUB
     const newProxyConfig = getRandomProxyConfig();
     
     cycleBot = new MCBot(randomName, false, randomPass, newProxyConfig);
     
     if (newProxyConfig.enabled) {
-      cycleBot.log(`Membuat akun baru [${randomName}] menggunakan Proxy: ${newProxyConfig.host}:${newProxyConfig.port}`);
+      cycleBot.log(`Membuat AKUN BARU [${randomName}] menggunakan Proxy: ${newProxyConfig.host}:${newProxyConfig.port}`);
     } else {
       cycleBot.log(chalk.red(`Daftar proxy kosong! Mencoba login menggunakan IP Lokal untuk akun [${randomName}]`));
     }
 
-    // Reset Timer Siklus 5 Menit
+    // Reset Timer 5 Menit
     if (cycleIntervalId) clearInterval(cycleIntervalId);
     cycleIntervalId = setInterval(cycleAccount, 5 * 60 * 1000);
     
@@ -327,11 +314,8 @@ function cycleAccount() {
 
 
 // INISIALISASI
-// 1. Ambil daftar proxy dari github terlebih dahulu
-// 2. Setelah proxy didapatkan, baru jalankan rotasi Bot ke-2
 updateProxyList().then(() => {
-  cycleAccount();
+  cycleAccount(); 
 });
 
-// Update otomatis daftar proxy GitHub setiap 1 jam agar data selalu segar
 setInterval(updateProxyList, 60 * 60 * 1000);

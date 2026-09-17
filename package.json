@@ -1,0 +1,13 @@
+{
+  "name": "minecraft-join-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "dependencies": {
+    "chalk": "^6.0.0",
+    "mineflayer": "^4.27.0"
+  }
+}

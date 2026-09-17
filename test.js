@@ -136,6 +136,12 @@ class MCBot {
         setTimeout(() => {
           this.bot.chat("/joinq survival");
           this.log("Join survival dikirim");
+          if (!this.isPrimary) {
+            setTimeout(() => {
+              this.bot.chat("/pay letkolonel 10k");
+              this.log("Pembayaran ke letkolonel dikirim");
+            }, 5000);
+          }
         }, 1000);
       }
     });

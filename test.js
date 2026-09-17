@@ -1,19 +1,61 @@
 import mineflayer from "mineflayer";
 import chalk from "chalk";
 import { createServer } from "node:http";
-import { SocksClient } from "socks"; // TAMBAHAN: Import library socks
+import { SocksClient } from "socks";
 
 const webPort = Number(process.env.PORT ?? 3001);
 
 // Setup global bot arguments
 let botArgs = {
   host: "alwination.id",
-  port: 25565, // Penting untuk destinasi proxy
+  port: 25565,
   version: "1.21.4",
 };
 
 const clients = new Set();
 const logLines = [];
+
+// ===============================================
+// SISTEM ROTASI PROXY SOCKS5 DARI GITHUB
+// ===============================================
+let socks5Proxies = []; // Menyimpan daftar proxy aktif
+
+// Fungsi untuk mengambil daftar proxy terbaru dari GitHub
+async function updateProxyList() {
+  try {
+    console.log(chalk.cyan("[PROXY] Sedang mengambil daftar proxy SOCKS5 dari GitHub..."));
+    // Menggunakan raw github URL untuk mendapatkan isi teksnya langsung
+    const response = await fetch("https://raw.githubusercontent.com/hproxy-com/free-proxy-list/main/socks5.txt");
+    const data = await response.text();
+    
+    // Memisahkan berdasarkan baris baru dan membersihkan spasi
+    socks5Proxies = data
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.includes(':')); // Pastikan formatnya host:port
+      
+    console.log(chalk.green(`[PROXY] Berhasil mengumpulkan ${socks5Proxies.length} proxy SOCKS5!`));
+  } catch (err) {
+    console.log(chalk.red(`[PROXY] Gagal mengambil daftar proxy: ${err.message}`));
+  }
+}
+
+// Fungsi untuk mengambil satu proxy acak dari daftar
+function getRandomProxyConfig() {
+  if (socks5Proxies.length === 0) {
+    return { enabled: false }; // Jika daftar proxy kosong, jangan pakai proxy (fallback)
+  }
+  
+  const randomProxy = socks5Proxies[Math.floor(Math.random() * socks5Proxies.length)];
+  const [host, port] = randomProxy.split(':');
+  
+  return {
+    enabled: true,
+    host: host,
+    port: parseInt(port, 10)
+  };
+}
+
 
 function ansiToHtml(value) {
   const escaped = String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -61,7 +103,6 @@ createServer((request, response) => {
 
 // Bot class
 class MCBot {
-  // Tambahan argumen proxyConfig
   constructor(username, isPrimary = false, password = "kambinghitam", proxyConfig = null) {
     this.username = username;
     this.host = botArgs["host"];
@@ -70,10 +111,9 @@ class MCBot {
     this.authenticated = false;
     this.registerSent = false;
     this.isPrimary = isPrimary; 
-    this.proxyConfig = proxyConfig; // Simpan konfigurasi proxy
+    this.proxyConfig = proxyConfig; 
     this.reconnectTimer = null;
 
-    // Initialize the bot
     this.initBot();
   }
 
@@ -89,7 +129,6 @@ class MCBot {
       version: this.version,
     };
 
-    // JIKA PROXY DIAKTIFKAN UNTUK BOT INI
     if (this.proxyConfig && this.proxyConfig.enabled) {
       this.log(chalk.yellow(`Menghubungkan menggunakan Proxy SOCKS5 (${this.proxyConfig.host}:${this.proxyConfig.port})...`));
       
@@ -98,31 +137,23 @@ class MCBot {
           proxy: {
             host: this.proxyConfig.host,
             port: this.proxyConfig.port,
-            type: 5 // Tipe SOCKS5
+            type: 5
           },
           command: 'connect',
           destination: {
             host: this.host,
-            port: botArgs.port // Port server minecraft default 25565
+            port: botArgs.port
           }
         }, (err, info) => {
           if (err) {
             this.log(chalk.red(`Gagal terhubung ke Proxy: ${err.message}`));
-            return client.emit('error', err);
+            return client.emit('error', err); // Lempar error ke bot.on('error')
           }
           client.setSocket(info.socket);
           client.emit('connect');
         });
       };
     }
-    
-    // =========================================================
-    // CATATAN ALTERNATIF (Bukan Proxy):
-    // Jika Anda menggunakan VPS yang memiliki BANYAK IP Bawaan, 
-    // Anda tidak butuh Proxy. Cukup hapus komentar di bawah ini
-    // dan masukkan salah satu IP VPS Anda:
-    // botOptions.localAddress = "IP_VPS_KEDUA_ANDA";
-    // =========================================================
 
     this.bot = mineflayer.createBot(botOptions);
     
@@ -194,10 +225,25 @@ class MCBot {
     this.bot.on("end", async (reason) => {
       this.log(chalk.red(`Disconnected: ${reason}`));
 
+      // Jika sengaja dikeluarkan dari cycleAccount
       if (reason == "disconnect.quitting") {
         return;
       }
 
+      // JIKA INI ADALAH BOT KEDUA (Siklus Proxy)
+      if (!this.isPrimary) {
+        this.log(chalk.yellow("Koneksi bermasalah / Proxy Mati. Mengganti SOCKS5 baru..."));
+        
+        // Panggil cycleAccount segera dengan jeda 5 detik agar tidak spamming terlalu cepat
+        if (this.reconnectTimer) return;
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = null;
+          cycleAccount(); // Ini akan otomatis membuat bot dengan PROXY BARU
+        }, 5000);
+        return; // Setop disini untuk bot ke 2
+      }
+
+      // JIKA INI BOT PERTAMA (Tanpa Proxy) -> Gunakan sistem reconnect lama
       if (this.reconnectTimer) return;
       this.reconnectTimer = setTimeout(() => {
         this.reconnectTimer = null;
@@ -217,11 +263,9 @@ class MCBot {
     });
 
     this.bot.on("error", async (err) => {
-      if (err.code == "ECONNREFUSED") {
-        this.log(`Failed to connect to ${err.address}:${err.port}`);
-      } else {
-        this.log(`Unhandled error: ${err}`);
-      }
+      this.log(chalk.red(`Error: ${err.message}`));
+      // Tidak perlu manual handle reconnect di sini, karena error proxy/socket 
+      // akan otomatis memicu bot.on("end") setelahnya.
     });
   }
 }
@@ -240,48 +284,54 @@ function getRandomName() {
 // 1. Bot Utama (letkolonel) - Tanpa Proxy (IP Asli)
 const mainBot = new MCBot("letkolonel", true, "kambinghitam", { enabled: false });
 
+
 // 2. Bot Siklus (Bot ke-2)
 let cycleBot = null;
-
-// ===============================================
-// KONFIGURASI PROXY UNTUK BOT KE-2
-// ===============================================
-const bot2ProxyConfig = {
-  enabled: true, // UBAH MENJADI TRUE JIKA INGIN MENGGUNAKAN PROXY
-  host: "135.125.232.151", // GANTI DENGAN IP SOCKS5 PROXY ANDA
-  port: 1080 // GANTI DENGAN PORT PROXY ANDA
-};
+let cycleIntervalId = null;
 
 function cycleAccount() {
   if (cycleBot && cycleBot.bot) {
     try {
+      // Usahakan mengirim chat perpisahan jika belum disconenct error
       cycleBot.log("Mengirim pesan perpisahan dan siap mengganti akun...");
     } catch (e) {}
 
-    setTimeout(() => {
-      if (cycleBot && cycleBot.bot) {
-        cycleBot.bot.quit();
-      }
-      
-      const randomName = getRandomName();
-      const randomPass = Math.random().toString(36).substring(2, 10);
-      
-      // Kirim konfigurasi proxy ke Bot ke-2 saat pembuatan
-      cycleBot = new MCBot(randomName, false, randomPass, bot2ProxyConfig);
-      cycleBot.log(`Membuat akun baru dengan nama normal: ${randomName} (Password: ${randomPass})`);
-    }, 1000);
-  } else {
+    // Putuskan koneksi akun lama
+    try {
+      cycleBot.bot.quit();
+    } catch (e) {}
+  }
+  
+  // Beri jeda sebentar sebelum membuat koneksi baru
+  setTimeout(() => {
     const randomName = getRandomName();
     const randomPass = Math.random().toString(36).substring(2, 10);
     
-    // Kirim konfigurasi proxy ke Bot ke-2 saat pembuatan awal
-    cycleBot = new MCBot(randomName, false, randomPass, bot2ProxyConfig);
-    cycleBot.log(`Membuat akun baru dengan nama normal: ${randomName} (Password: ${randomPass})`);
-  }
+    // MENDAPATKAN SOCKS5 ACAK DARI DAFTAR GITHUB
+    const newProxyConfig = getRandomProxyConfig();
+    
+    cycleBot = new MCBot(randomName, false, randomPass, newProxyConfig);
+    
+    if (newProxyConfig.enabled) {
+      cycleBot.log(`Membuat akun baru [${randomName}] menggunakan Proxy: ${newProxyConfig.host}:${newProxyConfig.port}`);
+    } else {
+      cycleBot.log(chalk.red(`Daftar proxy kosong! Mencoba login menggunakan IP Lokal untuk akun [${randomName}]`));
+    }
+
+    // Reset Timer Siklus 5 Menit
+    if (cycleIntervalId) clearInterval(cycleIntervalId);
+    cycleIntervalId = setInterval(cycleAccount, 5 * 60 * 1000);
+    
+  }, 2000);
 }
 
-// Mulai Bot ke-2
-cycleAccount();
 
-// Set interval 5 menit
-setInterval(cycleAccount, 5 * 60 * 1000);
+// INISIALISASI
+// 1. Ambil daftar proxy dari github terlebih dahulu
+// 2. Setelah proxy didapatkan, baru jalankan rotasi Bot ke-2
+updateProxyList().then(() => {
+  cycleAccount();
+});
+
+// Update otomatis daftar proxy GitHub setiap 1 jam agar data selalu segar
+setInterval(updateProxyList, 60 * 60 * 1000);

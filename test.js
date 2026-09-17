@@ -2,6 +2,8 @@ import mineflayer from "mineflayer";
 import chalk from "chalk";
 import { createServer } from "node:http";
 
+const webPort = Number(process.env.PORT ?? 3001);
+
 // Setup global bot arguments
 let botArgs = {
   host: "alwination.id",
@@ -53,11 +55,11 @@ createServer((request, response) => {
 <title>Minecraft Bot</title><style>body{margin:0;background:#111;color:#ddd;font:14px monospace}#log{height:calc(100vh - 52px);overflow:auto;padding:12px;white-space:pre-wrap}form{display:flex;position:fixed;bottom:0;width:100%;height:40px}input{flex:1;background:#222;color:#fff;border:0;padding:0 12px;font:inherit}button{width:100px;background:#3a7;color:white;border:0}</style>
 <div id="log"></div><form><input autofocus placeholder="Kirim chat..."><button>Kirim</button></form>
 <script>const log=document.querySelector('#log'), source=new EventSource('/events');source.onmessage=e=>{log.innerHTML+=e.data+'<br>';log.scrollTop=log.scrollHeight};document.querySelector('form').onsubmit=async e=>{e.preventDefault();const input=document.querySelector('input');await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:input.value})});input.value=''}</script>`);
-}).listen(3000, () => console.log("Web log: http://localhost:3000"));
+}).listen(webPort, "0.0.0.0", () => console.log(`Web log: http://localhost:${webPort}`));
 
 // Bot class
 class MCBot {
-  constructor(username, isPrimary = false, password = "hesoyam123") {
+  constructor(username, isPrimary = false, password = "kambinghitam") {
     this.username = username;
     this.host = botArgs["host"];
     this.version = botArgs["version"];
@@ -189,8 +191,8 @@ function getRandomName() {
   return `${randomStr}${randomNumber}`; // Contoh output: Dimas8421
 }
 
-// 1. Bot Utama (kunkun)
-const mainBot = new MCBot("kunkun", true, "hesoyam123");
+// 1. Bot Utama (letkolonel)
+const mainBot = new MCBot("letkolonel", true, "kambinghitam");
 
 // 2. Bot Siklus (Bot ke-2)
 let cycleBot = null;

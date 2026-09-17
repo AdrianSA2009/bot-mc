@@ -46,7 +46,7 @@ function getRandomProxyConfig() {
   const [host, port] = randomProxy.split(':');
   
   return {
-    enabled: true,
+    enabled: false,
     host: host,
     port: parseInt(port, 10)
   };

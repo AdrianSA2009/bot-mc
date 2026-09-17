@@ -247,7 +247,7 @@ let cycleBot = null;
 // KONFIGURASI PROXY UNTUK BOT KE-2
 // ===============================================
 const bot2ProxyConfig = {
-  enabled: false, // UBAH MENJADI TRUE JIKA INGIN MENGGUNAKAN PROXY
+  true: false, // UBAH MENJADI TRUE JIKA INGIN MENGGUNAKAN PROXY
   host: "135.125.232.151", // GANTI DENGAN IP SOCKS5 PROXY ANDA
   port: 1080 // GANTI DENGAN PORT PROXY ANDA
 };

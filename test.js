@@ -13,6 +13,14 @@ let botArgs = {
 const clients = new Set();
 const logLines = [];
 
+// Daftar bot yang inventory-nya boleh dicek lewat web (key = username lowercase)
+const inventoryBots = new Map();
+
+function getInventoryBot(name) {
+  const entry = inventoryBots.get(String(name ?? "").toLowerCase());
+  return entry?.bot ?? null;
+}
+
 function ansiToHtml(value) {
   const escaped = String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   return escaped
@@ -30,6 +38,8 @@ function publish(line) {
 }
 
 createServer((request, response) => {
+  const { pathname, searchParams } = new URL(request.url, "http://localhost");
+
   if (request.url === "/events") {
     response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
     for (const line of logLines) response.write(`data: ${JSON.stringify(line)}\n\n`);
@@ -52,17 +62,22 @@ createServer((request, response) => {
     return;
   }
 
-  // Inventory API
-  if (request.url === "/inventory") {
+  // Inventory API (?bot=letkolonel | maybewecan22 | heyakol123)
+  if (pathname === "/inventory") {
     response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-    if (!globalThis.activeBot) return response.end(JSON.stringify([]));
-    const items = globalThis.activeBot.inventory.items();
-    const grouped = {};
-    for (const item of items) {
-      if (!grouped[item.name]) grouped[item.name] = { name: item.name, displayName: item.displayName, count: 0, slot: item.slot };
-      grouped[item.name].count += item.count;
+    const bot = getInventoryBot(searchParams.get("bot") ?? "letkolonel");
+    if (!bot) return response.end(JSON.stringify([]));
+    try {
+      const items = bot.inventory.items();
+      const grouped = {};
+      for (const item of items) {
+        if (!grouped[item.name]) grouped[item.name] = { name: item.name, displayName: item.displayName, count: 0, slot: item.slot };
+        grouped[item.name].count += item.count;
+      }
+      response.end(JSON.stringify(Object.values(grouped)));
+    } catch {
+      response.end(JSON.stringify([]));
     }
-    response.end(JSON.stringify(Object.values(grouped)));
     return;
   }
 
@@ -72,9 +87,9 @@ createServer((request, response) => {
     request.on("data", (chunk) => { dropBody += chunk; });
     request.on("end", async () => {
       try {
-        const { itemName, count } = JSON.parse(dropBody);
-        if (!globalThis.activeBot || !itemName) return response.writeHead(400).end("Bot tidak aktif");
-        const bot = globalThis.activeBot;
+        const { itemName, count, botName } = JSON.parse(dropBody);
+        const bot = getInventoryBot(botName ?? "letkolonel");
+        if (!bot || !itemName) return response.writeHead(400).end("Bot tidak aktif");
         const dropItems = bot.inventory.items().filter(i => i.name === itemName);
         if (!dropItems.length) return response.writeHead(404).end("Item tidak ditemukan");
         let dropped = 0;
@@ -85,12 +100,16 @@ createServer((request, response) => {
           await bot.tossStack(item);
           dropped += Math.min(item.count, dropCount - dropped);
         }
-        publish(`[INVENTORY] Dropped ${dropped}x ${itemName}`);
+        publish(`[INVENTORY] ${botName ?? "letkolonel"} dropped ${dropped}x ${itemName}`);
         response.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ dropped }));
       } catch (e) { response.writeHead(400).end("Error: " + e.message); }
     });
     return;
   }
+
+  const botOptions = [...inventoryBots.values()]
+    .map((b) => `<option value="${b.username.toLowerCase()}">${b.username}</option>`)
+    .join("");
 
   response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }).end(`<!doctype html>
 <title>Minecraft Bot</title>
@@ -105,6 +124,7 @@ createServer((request, response) => {
   #invOverlay.open { display:flex; }
   #invPanel { background:#1e1e1e; border:1px solid #444; border-radius:8px; padding:16px; width:420px; max-height:80vh; overflow:auto; }
   #invPanel h2 { margin:0 0 12px; color:#0f0; font-size:16px; }
+  #botSel { width:100%; margin-bottom:10px; padding:6px; background:#222; color:#fff; border:1px solid #444; border-radius:4px; font:inherit; }
   #invList { list-style:none; padding:0; margin:0; }
   #invList li { display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid #333; }
   .inv-name { flex:1; }
@@ -124,6 +144,7 @@ createServer((request, response) => {
   <div id="invPanel">
     <button id="invClose" onclick="closeInv()">&#10005;</button>
     <h2>&#128230; Inventory</h2>
+    <select id="botSel" onchange="loadInv()">${botOptions}</select>
     <ul id="invList"></ul>
     <button id="invRefresh" onclick="loadInv()">&#128260; Refresh</button>
   </div>
@@ -137,12 +158,13 @@ document.querySelector('form').onsubmit=async e=>{e.preventDefault();const input
 function openInv(){document.querySelector('#invOverlay').classList.add('open');loadInv()}
 function closeInv(){document.querySelector('#invOverlay').classList.remove('open')}
 document.querySelector('#invOverlay').addEventListener('click',e=>{if(e.target.id==='invOverlay')closeInv()});
+function curBot(){return document.querySelector('#botSel').value}
 async function loadInv(){
   const list=document.querySelector('#invList');
   try{
-    const res=await fetch('/inventory');
+    const res=await fetch('/inventory?bot='+encodeURIComponent(curBot()));
     const items=await res.json();
-    if(!items.length){list.innerHTML='<li id="invEmpty">Inventory kosong</li>';return}
+    if(!items.length){list.innerHTML='<li id="invEmpty">Inventory kosong (atau bot belum online)</li>';return}
     list.innerHTML=items.map(i=>
       '<li><span class="inv-name">'+i.displayName+'</span><span class="inv-count">&times;'+i.count+'</span><span class="inv-actions">'+
       '<button class="btn-drop" onclick="dropItem(\\''+i.name+'\\',1)">Drop 1</button>'+
@@ -152,23 +174,31 @@ async function loadInv(){
   }catch{list.innerHTML='<li id="invEmpty">Gagal memuat</li>'}
 }
 async function dropItem(name,count){
-  await fetch('/drop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({itemName:name,count})});
+  await fetch('/drop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({itemName:name,count,botName:curBot()})});
   loadInv();
 }
 </script>`);
 }).listen(webPort, "0.0.0.0", () => console.log(`Web log: http://localhost:${webPort}`));
 
 // Bot class
+// options:
+//   password      : password untuk /register dan /login
+//   isPrimary     : bot utama (menerima chat dari dashboard)
+//   payToMain     : setelah join survival, kirim /pay letkolonel 10k (dipakai bot siklus)
+//   showInventory : tampilkan inventory bot ini di dashboard
 class MCBot {
-  constructor(username, isPrimary = false, password = "kambinghitam") {
+  constructor(username, { password = "kambinghitam", isPrimary = false, payToMain = false, showInventory = false } = {}) {
     this.username = username;
     this.host = botArgs["host"];
     this.version = botArgs["version"];
-    this.password = password; 
+    this.password = password;
     this.authenticated = false;
     this.registerSent = false;
-    this.isPrimary = isPrimary; 
+    this.isPrimary = isPrimary;
+    this.payToMain = payToMain;
     this.reconnectTimer = null;
+
+    if (showInventory) inventoryBots.set(username.toLowerCase(), this);
 
     // Initialize the bot
     this.initBot();
@@ -184,7 +214,7 @@ class MCBot {
       host: this.host,
       version: this.version,
     });
-    
+
     if (this.isPrimary) {
       globalThis.activeBot = this.bot;
     }
@@ -236,7 +266,7 @@ class MCBot {
         setTimeout(() => {
           this.bot.chat("/joinq survival");
           this.log("Join survival dikirim");
-          if (!this.isPrimary) {
+          if (this.payToMain) {
             setTimeout(() => {
               this.bot.chat("/pay letkolonel 10k");
               this.log("Pembayaran ke letkolonel dikirim");
@@ -297,11 +327,36 @@ function getRandomName() {
   return `${randomStr}${randomNumber}`;
 }
 
-// 1. Bot Utama (letkolonel)
-const mainBot = new MCBot("letkolonel", true, "kambinghitam");
+// 1. Bot Utama (letkolonel) - inventory tampil di dashboard
+const mainBot = new MCBot("letkolonel", {
+  password: "kambinghitam",
+  isPrimary: true,
+  showInventory: true,
+});
 
-// 2. Bot Siklus (Bot ke-2)
+// 2. Bot tetap tambahan - inventory tampil di dashboard.
+//    Dijeda beberapa detik agar tidak kena connection throttle dari server.
+const extraBots = [];
+const extraBotConfigs = [
+  { username: "MaybeWecan22", password: "ghur1234" },
+  { username: "heyakol123", password: "hesoyam123" },
+];
+extraBotConfigs.forEach((cfg, index) => {
+  setTimeout(() => {
+    extraBots.push(new MCBot(cfg.username, { password: cfg.password, showInventory: true }));
+  }, (index + 1) * 6000);
+});
+
+// 3. Bot Siklus (auto create) - inventory TIDAK ditampilkan
 let cycleBot = null;
+
+function createCycleBot() {
+  const randomName = getRandomName();
+  const randomPass = Math.random().toString(36).substring(2, 10);
+
+  cycleBot = new MCBot(randomName, { password: randomPass, payToMain: true });
+  cycleBot.log(`Membuat akun baru dengan nama normal: ${randomName} (Password: ${randomPass})`);
+}
 
 function cycleAccount() {
   if (cycleBot && cycleBot.bot) {
@@ -313,23 +368,14 @@ function cycleAccount() {
       if (cycleBot && cycleBot.bot) {
         cycleBot.bot.quit();
       }
-      
-      const randomName = getRandomName();
-      const randomPass = Math.random().toString(36).substring(2, 10);
-      
-      cycleBot = new MCBot(randomName, false, randomPass);
-      cycleBot.log(`Membuat akun baru dengan nama normal: ${randomName} (Password: ${randomPass})`);
+      createCycleBot();
     }, 1000);
   } else {
-    const randomName = getRandomName();
-    const randomPass = Math.random().toString(36).substring(2, 10);
-    
-    cycleBot = new MCBot(randomName, false, randomPass);
-    cycleBot.log(`Membuat akun baru dengan nama normal: ${randomName} (Password: ${randomPass})`);
+    createCycleBot();
   }
 }
 
-// Mulai Bot ke-2
+// Mulai Bot siklus
 cycleAccount();
 
 // Set interval 5 menit

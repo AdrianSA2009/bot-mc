@@ -13,7 +13,10 @@ let botArgs = {
 const clients = new Set();
 const logLines = [];
 
-// Daftar bot yang inventory-nya boleh dicek lewat web (key = username lowercase)
+// Daftar tetap bot yang muncul di dropdown inventory (bot auto-create sengaja tidak ada di sini)
+const inventoryBotNames = ["letkolonel", "MaybeWecan22", "heyakol123"];
+
+// Instance bot yang sudah dibuat (key = username lowercase), diisi oleh constructor MCBot
 const inventoryBots = new Map();
 
 function getInventoryBot(name) {
@@ -52,12 +55,14 @@ createServer((request, response) => {
     request.on("data", (chunk) => { body += chunk; });
     request.on("end", () => {
       try {
-        const message = JSON.parse(body).message?.trim();
-        if (!message || !globalThis.activeBot) return response.writeHead(400).end("Pesan kosong");
-        globalThis.activeBot.chat(message);
-        publish(`[BOT] ${message}`);
+        const parsed = JSON.parse(body);
+        const message = parsed.message?.trim();
+        const bot = getInventoryBot(parsed.botName ?? "letkolonel");
+        if (!message || !bot) return response.writeHead(400).end("Pesan kosong atau bot tidak aktif");
+        bot.chat(message);
+        publish(`[BOT ${bot.username}] ${message}`);
         response.writeHead(204).end();
-      } catch { response.writeHead(400).end("JSON tidak valid"); }
+      } catch (e) { response.writeHead(400).end("Gagal mengirim: " + e.message); }
     });
     return;
   }
@@ -107,8 +112,8 @@ createServer((request, response) => {
     return;
   }
 
-  const botOptions = [...inventoryBots.values()]
-    .map((b) => `<option value="${b.username.toLowerCase()}">${b.username}</option>`)
+  const botOptions = inventoryBotNames
+    .map((name) => `<option value="${name.toLowerCase()}">${name}</option>`)
     .join("");
 
   response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }).end(`<!doctype html>
@@ -118,6 +123,7 @@ createServer((request, response) => {
   #log { height:calc(100vh - 52px); overflow:auto; padding:12px; white-space:pre-wrap; }
   form { display:flex; position:fixed; bottom:0; width:100%; height:40px; }
   input[type=text] { flex:1; background:#222; color:#fff; border:0; padding:0 12px; font:inherit; }
+  #chatBot { background:#2a2a2a; color:#fff; border:0; border-right:1px solid #444; padding:0 8px; font:inherit; }
   button { width:100px; background:#3a7; color:white; border:0; cursor:pointer; }
   #invBtn { position:fixed; top:8px; right:8px; z-index:10; background:#555; color:#fff; border:0; padding:6px 14px; border-radius:4px; cursor:pointer; font:inherit; }
   #invOverlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:20; justify-content:center; align-items:center; }
@@ -149,12 +155,12 @@ createServer((request, response) => {
     <button id="invRefresh" onclick="loadInv()">&#128260; Refresh</button>
   </div>
 </div>
-<form><input type="text" autofocus placeholder="Kirim chat..."><button>Kirim</button></form>
+<form><select id="chatBot">${botOptions}</select><input type="text" autofocus placeholder="Kirim chat..."><button>Kirim</button></form>
 <script>
 const log=document.querySelector('#log');
 const source=new EventSource('/events');
 source.onmessage=e=>{log.innerHTML+=e.data+'<br>';log.scrollTop=log.scrollHeight};
-document.querySelector('form').onsubmit=async e=>{e.preventDefault();const input=document.querySelector('input[type=text]');await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:input.value})});input.value=''};
+document.querySelector('form').onsubmit=async e=>{e.preventDefault();const input=document.querySelector('input[type=text]');await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:input.value,botName:document.querySelector('#chatBot').value})});input.value=''};
 function openInv(){document.querySelector('#invOverlay').classList.add('open');loadInv()}
 function closeInv(){document.querySelector('#invOverlay').classList.remove('open')}
 document.querySelector('#invOverlay').addEventListener('click',e=>{if(e.target.id==='invOverlay')closeInv()});
